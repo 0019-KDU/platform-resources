@@ -1,0 +1,165 @@
+# =============================================================================
+# Self-service cloud resources pipeline (DevOps94 IDP)
+#
+#   Backstage template ─► PR adding resources/<type>/<name>/
+#   pull_request  ─► terraform plan (read-only role)  ─► plan posted as a PR comment
+#   merge to main ─► terraform apply (apply role, devops94-idp-res-* only)
+#
+# Decommission: add a file named DESTROY in the resource folder (via PR). The plan
+# shows what will be deleted; merging runs terraform destroy.
+# =============================================================================
+name: resources
+
+on:
+  pull_request:
+    paths: ["resources/**"]
+  push:
+    branches: [main]
+    paths: ["resources/**"]
+
+permissions:
+  contents: read
+
+env:
+  TF_VERSION: 1.16.3
+  AWS_REGION: ap-south-1
+  PLAN_ROLE: arn:aws:iam::697502032879:role/devops94-idp-resources-plan
+  APPLY_ROLE: arn:aws:iam::697502032879:role/devops94-idp-resources-apply
+
+jobs:
+  changes:
+    name: Find changed resources
+    runs-on: ubuntu-latest
+    outputs:
+      dirs: ${{ steps.find.outputs.dirs }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: find
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          # resources/<type>/<name>/... -> unique resource folders that still exist
+          DIRS=$(git diff --name-only "$BASE" HEAD -- resources/ \
+            | awk -F/ 'NF>=4 {print $1"/"$2"/"$3}' | sort -u \
+            | while read -r d; do [ -f "$d/main.tf" ] && echo "$d"; done \
+            | jq -R -s -c 'split("\n") | map(select(length>0))')
+          echo "dirs=${DIRS}" >> "$GITHUB_OUTPUT"
+          echo "Changed resources: ${DIRS}"
+
+  plan:
+    name: Plan ${{ matrix.dir }}
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.dirs != '[]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write       # OIDC -> read-only plan role
+      pull-requests: write  # post the plan as a comment
+    strategy:
+      fail-fast: false
+      matrix:
+        dir: ${{ fromJSON(needs.changes.outputs.dirs) }}
+    defaults:
+      run:
+        working-directory: ${{ matrix.dir }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ env.PLAN_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+      - name: terraform fmt / init / validate
+        run: |
+          terraform fmt -check -diff
+          terraform init -input=false
+          terraform validate -no-color
+      - name: terraform plan
+        id: plan
+        run: |
+          MODE=""; [ -f DESTROY ] && MODE="-destroy"
+          set +e
+          terraform plan -input=false -no-color -lock-timeout=60s $MODE -out=tf.plan > plan.txt 2>&1
+          RC=$?
+          set -e
+          cat plan.txt
+          echo "rc=${RC}" >> "$GITHUB_OUTPUT"
+          echo "summary=$(grep -E '^(Plan:|No changes)' plan.txt | head -1)" >> "$GITHUB_OUTPUT"
+          exit $RC
+      - name: Comment plan on the pull request
+        if: always() && steps.plan.outputs.rc != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          DIR: ${{ matrix.dir }}
+          SUMMARY: ${{ steps.plan.outputs.summary }}
+          RC: ${{ steps.plan.outputs.rc }}
+        run: |
+          {
+            if [ "$RC" = 0 ]; then echo "### :white_check_mark: Terraform plan: \`${DIR}\`"; else echo "### :x: Terraform plan failed: \`${DIR}\`"; fi
+            echo
+            echo "**${SUMMARY:-see details}**"
+            [ -f DESTROY ] && echo && echo ":warning: **This will DELETE the resource** (DESTROY marker present)."
+            echo
+            echo "<details><summary>Full plan</summary>"
+            echo
+            echo '```'
+            tail -c 60000 plan.txt
+            echo '```'
+            echo "</details>"
+            echo
+            echo "_Merging this pull request applies the plan to AWS._"
+          } > comment.md
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file comment.md
+
+  apply:
+    name: Apply ${{ matrix.dir }}
+    needs: changes
+    if: github.event_name == 'push' && needs.changes.outputs.dirs != '[]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # OIDC -> apply role (trusted for refs/heads/main only)
+    concurrency:
+      group: apply-${{ matrix.dir }}
+      cancel-in-progress: false
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        dir: ${{ fromJSON(needs.changes.outputs.dirs) }}
+    defaults:
+      run:
+        working-directory: ${{ matrix.dir }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ env.APPLY_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+      - name: terraform init
+        run: terraform init -input=false
+      - name: terraform apply (or destroy when a DESTROY marker exists)
+        run: |
+          if [ -f DESTROY ]; then
+            terraform destroy -input=false -auto-approve -no-color
+          else
+            terraform apply -input=false -auto-approve -no-color
+          fi
+      - name: Summary
+        if: success()
+        run: |
+          {
+            echo "### :rocket: \`${{ matrix.dir }}\`"
+            if [ -f DESTROY ]; then echo "Destroyed."; else
+              echo '```'; terraform output -no-color; echo '```'; fi
+          } >> "$GITHUB_STEP_SUMMARY"
