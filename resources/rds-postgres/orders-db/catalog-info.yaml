@@ -1,0 +1,22 @@
+apiVersion: backstage.io/v1alpha1
+kind: Resource
+metadata:
+  name: rds-orders-db
+  title: orders-db (PostgreSQL)
+  description: "Orders database for orders-api"
+  tags:
+    - aws
+    - rds
+  links:
+    - url: https://ap-south-1.console.aws.amazon.com/rds/home?region=ap-south-1#database:id=devops94-idp-res-orders-db
+      title: RDS console
+      icon: cloud
+    - url: https://github.com/0019-KDU/platform-resources/tree/main/resources/rds-postgres/orders-db
+      title: Terraform definition
+      icon: github
+spec:
+  type: postgres-database
+  owner: group:default/platform-admins
+  system: idp-demo
+  dependencyOf:
+    - component:default/orders-api
