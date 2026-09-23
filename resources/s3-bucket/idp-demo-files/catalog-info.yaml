@@ -1,0 +1,22 @@
+apiVersion: backstage.io/v1alpha1
+kind: Resource
+metadata:
+  name: s3-idp-demo-files
+  title: idp-demo-files (S3 bucket)
+  description: "Demo file storage for orders-api"
+  tags:
+    - aws
+    - s3
+  links:
+    - url: https://s3.console.aws.amazon.com/s3/buckets/devops94-idp-res-idp-demo-files-697502032879?region=ap-south-1
+      title: S3 console
+      icon: cloud
+    - url: https://github.com/0019-KDU/platform-resources/tree/main/resources/s3-bucket/idp-demo-files
+      title: Terraform definition
+      icon: github
+spec:
+  type: s3-bucket
+  owner: group:default/platform-admins
+  system: idp-demo
+  dependencyOf:
+    - component:default/orders-api
