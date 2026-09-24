@@ -1,1 +1,1 @@
-One folder per resource: `resources/<type>/<name>/` — created by Backstage templates.
+One folder per resource: `resources/<type>/<environment>/<name>/`, created by Backstage templates.

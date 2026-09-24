@@ -1,7 +1,7 @@
 # =============================================================================
 # Self-service cloud resources pipeline (DevOps94 IDP)
 #
-#   Backstage template ─► PR adding resources/<type>/<name>/
+#   Backstage template ─► PR adding resources/<type>/<environment>/<name>/
 #   pull_request  ─► terraform plan (read-only role)  ─► plan posted as a PR comment
 #   merge to main ─► terraform apply (apply role, devops94-idp-res-* only)
 #
@@ -40,9 +40,9 @@ jobs:
         env:
           BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
         run: |
-          # resources/<type>/<name>/... -> unique resource folders that still exist
+          # resources/<type>/<environment>/<name>/... -> unique resource folders that still exist
           DIRS=$(git diff --name-only "$BASE" HEAD -- resources/ \
-            | awk -F/ 'NF>=4 {print $1"/"$2"/"$3}' | sort -u \
+            | awk -F/ 'NF>=5 {print $1"/"$2"/"$3"/"$4}' | sort -u \
             | while read -r d; do [ -f "$d/main.tf" ] && echo "$d"; done \
             | jq -R -s -c 'split("\n") | map(select(length>0))')
           echo "dirs=${DIRS}" >> "$GITHUB_OUTPUT"
