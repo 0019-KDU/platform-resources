@@ -29,7 +29,7 @@ provider "aws" {
 }
 
 module "this" {
-  source      = "git::https://github.com/0019-KDU/idp-platform.git//infra/modules/s3-bucket?ref=main"
+  source      = "git::https://github.com/0019-KDU/platform-infra.git//modules/s3-bucket?ref=v1.0.0"
   environment = "dev"
   name        = "shop-images"
   versioning  = true
